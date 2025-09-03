@@ -14,6 +14,10 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from chromadb.config import Settings
 from config import BASE_DIR, DATA_DIR, VECT_DIR, GRAPH_PATH, META_PATH
 
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors="replace")
+
 # Env
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["TRANSFORMERS_PREFER_SAFETENSORS"] = "1"
@@ -101,7 +105,10 @@ for file in tqdm(csv_files, desc="📂 Обработка CSV файлов"):
             if col.endswith("_GUID"):
                 tgt = norm_guid(row[col])
                 if tgt:
-                    G.add_edge(guid, tgt, relation=col)
+                    # Прямое направление (Проект → Контрагент)
+                    G.add_edge(guid, tgt, relation=col, direction="forward")
+                    # Обратное направление (Контрагент → Проект)
+                    G.add_edge(tgt, guid, relation=col, direction="reverse")
 
     record_count = len(df)
     docs.append(Document(

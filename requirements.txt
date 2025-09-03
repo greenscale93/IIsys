@@ -3,6 +3,7 @@ numpy==1.26.4
 pandas==2.1.4
 tqdm==4.66.4
 networkx==3.2.1
+pyvis==0.3.2
 
 # === LangChain stack (согласованные версии) ===
 pydantic==2.6.4
@@ -18,7 +19,9 @@ sentence-transformers==2.6.1
 transformers>=4.41.1
 safetensors>=0.4.5
 chromadb==0.4.24
-
+PySimpleGUI==4.60.5
+PyQt6>=6.6.0
+qdarkstyle>=3.2.3
 # === Улучшения поиска ===
 rapidfuzz==3.7.0
 rank-bm25==0.2.2

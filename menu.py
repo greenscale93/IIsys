@@ -54,6 +54,19 @@ def run_reset_and_ingest():
         print(f"⚠ Ошибка во время очистки/пересборки: {e}")
     input("\n▶ Нажми Enter, чтобы вернуться в меню...")
 
+def run_graph_preview():
+    """Интерактивный просмотр графа (pyvis)"""
+    view_path = os.path.join(SCRIPTS_DIR, "graph", "view.py")
+    if not os.path.exists(view_path):
+        print("⚠ Файл graph/view.py не найден!")
+        input("\n▶ Нажми Enter, чтобы вернуться в меню...")
+        return
+    try:
+        subprocess.run([VENV_PYTHON, view_path, "--preview"], check=True)
+    except Exception as e:
+        print(f"⚠ Ошибка при запуске graph/view.py: {e}")
+    input("\n▶ Нажми Enter, чтобы вернуться в меню...")
+
 def main():
     while True:
         os.system("cls")  # очистка экрана в Windows
@@ -62,12 +75,13 @@ def main():
         print("2. Обновить векторную базу (ingest.py)")
         print("3. Задать вопрос к базе (assistant_main.py)")
         print("4. Очистить и пересоздать векторную базу")
-        print("5. Выход")
+        print("5. Посмотреть граф (интерактивно)")
+        print("6. Выход")
 
-        choice = input("\nВыбери опцию (1/2/3/4/5): ").strip()
+        choice = input("\nВыбери опцию (1/2/3/4/5/6): ").strip()
         
         if choice == "1":
-            run_onescript("C:\RAGOS\ВыгрузкаИз1С.os")
+            run_onescript("C:\\RAGOS\\ВыгрузкаИз1С.os")
         elif choice == "2":
             run_python("ingest.py")
         elif choice == "3":
@@ -75,6 +89,8 @@ def main():
         elif choice == "4":
             run_reset_and_ingest()
         elif choice == "5":
+            run_graph_preview()
+        elif choice == "6":
             print("👋 Программа завершена.")
             sys.exit(0)
         else:
