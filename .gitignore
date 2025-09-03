@@ -5,3 +5,40 @@
 /templates.json
 /value_mappings_user.json
 /__pycache__
+repo_chunks/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environments
+.venv/
+venv/
+env/
+.conda/
+*.env
+.env
+
+# Tools / caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+*.log
