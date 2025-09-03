@@ -1,0 +1,24 @@
+# === Base ===
+numpy==1.26.4
+pandas==2.1.4
+tqdm==4.66.4
+networkx==3.2.1
+
+# === LangChain stack (согласованные версии) ===
+pydantic==2.6.4
+pydantic-core==2.16.3
+langchain==0.2.6
+langchain-core==0.2.23
+langchain-community==0.2.6
+langchain-chroma==0.1.2
+langchain-huggingface==0.0.3
+
+# === Embeddings and DB ===
+sentence-transformers==2.6.1
+transformers>=4.41.1
+safetensors>=0.4.5
+chromadb==0.4.24
+
+# === Улучшения поиска ===
+rapidfuzz==3.7.0
+rank-bm25==0.2.2
