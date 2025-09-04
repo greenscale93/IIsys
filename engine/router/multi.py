@@ -39,7 +39,7 @@ def count_multi(entity: str, pairs: List[Tuple[str, str]], dfs: dict):
         if sugg: note_lines.append(suggest_values_message(entity, "(см. выше поле)", "(см. исходный запрос)", sugg, used=sugg[0]))
     pairs_text = ", ".join([f'{f} = "{v}"' for (f, _), (_, v, *_s) in zip(pairs, resolved)])
     notes_text = ("\n" + "\n".join(note_lines)) if note_lines else ""
-    return f'Применяю шаблон: Сколько "{entity}" по {pairs_text}{notes_text}\n{out}'
+    return f'**Применяю шаблон:** Сколько "{entity}" по {pairs_text}{notes_text}\n🧠 **Мой ответ:** {out}'
 
 def list_multi(entity: str, pairs: List[Tuple[str, str]], dfs: dict):
     df_var = f"df_{entity}"
@@ -73,4 +73,4 @@ def list_multi(entity: str, pairs: List[Tuple[str, str]], dfs: dict):
         if sugg: note_lines.append(suggest_values_message(entity, "(см. выше поле)", "(см. исходный запрос)", sugg, used=sugg[0]))
     pairs_text = ", ".join([f'{f} = "{v}"' for (f, _), (_, v, *_s) in zip(pairs, resolved)])
     notes_text = ("\n" + "\n".join(note_lines)) if note_lines else ""
-    return f'Применяю шаблон: Список "{entity}" по {pairs_text}{notes_text}\n{out}'
+    return f'**Применяю шаблон:** Список "{entity}" по {pairs_text}{notes_text}\n🧠 **Мой ответ:** {out}'

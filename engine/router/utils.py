@@ -25,8 +25,11 @@ def suggest_cols_message(entity: str, field: str, df_name: str, suggestions: Lis
     return "\n".join(lines)
 
 def suggest_values_message(entity: str, field: str, asked_value: str, suggestions: List[Tuple[str, int]], used=None) -> str:
-    lines = [f"⚠ Точного значения «{asked_value}» для поля «{field}» не найдено в «{entity}».",
-             f'→ Использую ближайшее: "{used[0]}" (совпадение {used[1]}%).' if used else "→ Ближайшие варианты:"]
+    lines = [
+        f"⚠ Точного значения «{asked_value}» для поля «{field}» не найдено в «{entity}».",
+        (f'→ **Использую ближайшее:** "{used[0]}" (совпадение {used[1]}%).' if used
+         else "→ **Ближайшие варианты:**")
+    ]
     for i, (val, score) in enumerate(suggestions, start=1):
         lines.append(f"  {i}) {val}  ({score}%)")
     lines += ["", "Принять подсказку и запомнить алиас:",

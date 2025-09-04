@@ -1,27 +1,30 @@
-# -*- coding: utf-8 -*-
-import sys, os, subprocess, threading, traceback, io, html, math
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTabWidget, QTextEdit, QScrollArea, QFrame, QSizePolicy
-)
-from PyQt6.QtGui import QAction, QFont, QTextDocument
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-
-# --- Настройки внешнего вида ---
-USER_BUBBLE_BG = "#DCF8C6"   # зелёный для пользователя
-BOT_BUBBLE_BG  = "#CFCFCF"   # более контрастный серый для бота
-
-# --- Настройки ширины пузырьков (не меняем как просили) ---
-BUBBLE_MAX_RATIO = 0.88   # доля ширины вьюпорта
-BUBBLE_MIN_PX    = 520    # базовый минимум в пикселях
-BUBBLE_PADDING_H = 20     # 10 слева + 10 справа (для расчёта ширины текста)
-
+import sys, os
 # --- Пути ---
 BASE_DIR = r"C:\RAGOS"
 SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 VENV_PYTHON = os.path.join(BASE_DIR, "rag_env", "Scripts", "python.exe")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
+
+# -*- coding: utf-8 -*-
+import subprocess, threading, traceback, io, html, math
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QTabWidget, QTextEdit, QScrollArea, QFrame, QSizePolicy
+)
+from PyQt6.QtGui import QAction, QFont, QTextDocument
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+import re
+from core.mappings import add_value_alias
+
+# --- Настройки внешнего вида ---
+USER_BUBBLE_BG = "#DCF8C6"   # зелёный для пользователя
+BOT_BUBBLE_BG  = "#E9EEF6"   # спокойный нейтральный (голубовато‑серый, не сливается с фоном)
+
+# --- Настройки ширины пузырьков (не меняем как просили) ---
+BUBBLE_MAX_RATIO = 0.88   # доля ширины вьюпорта
+BUBBLE_MIN_PX    = 520    # базовый минимум в пикселях
+BUBBLE_PADDING_H = 20     # 10 слева + 10 справа (для расчёта ширины текста)
 
 # --- Импорт логики ---
 import state
@@ -44,6 +47,12 @@ except Exception as e:
     print("Ошибка инициализации ассистента:", e)
 
 
+def as_rich_wrapped_bot(text: str) -> str:
+    # Безопасный «лайт markdown»: **жирный**, остальное экранируем
+    safe = html.escape(text)
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+    return f"<div style='white-space: pre-wrap; word-break: break-word'>{safe}</div>"
+
 # === Утилита для безопасной отрисовки текста с переносами длинных слов ===
 def as_rich_wrapped(text: str) -> str:
     return f"<div style='white-space: pre-wrap; word-break: break-word'>{html.escape(text)}</div>"
@@ -58,6 +67,57 @@ class BubbleChat(QWidget):
         self.layout.setContentsMargins(8, 8, 8, 8)
         self.layout.setSpacing(8)
         self.layout.addStretch(1)
+    
+    def add_action_button(self, who, caption: str, on_click):
+        # Контейнер с собственной разметкой, чтобы можно было удалить целиком
+        cont = QWidget()
+        row = QHBoxLayout(cont)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+
+        btn = QPushButton(caption)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        font = QFont("Segoe UI", 10)
+        font.setWeight(QFont.Weight.DemiBold)  # жирнее обычного
+        btn.setFont(font)
+
+        # Стиль в духе пузырьков
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #CDEFD7;   /* спокойный, но заметный зелёный */
+                color: #0F5132;              /* тёмно‑зелёный текст */
+                border: 1px solid #86D3A9;   /* тонкая зелёная рамка */
+                border-radius: 10px;
+                padding: 8px 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover   { background-color: #BFE8CC; }
+            QPushButton:pressed { background-color: #B2E2C1; }
+            QPushButton:disabled{
+                background-color: #EAF6EF;
+                color: #9AA4B2;
+                border-color: #D5EBDD;
+            }
+        """)
+
+        def handler():
+            try:
+                on_click()
+            finally:
+                # По требованию — убрать кнопку "будто её и не было"
+                cont.setParent(None)
+                cont.deleteLater()
+
+        btn.clicked.connect(handler)
+
+        align = Qt.AlignmentFlag.AlignLeft if who == "bot" else Qt.AlignmentFlag.AlignRight
+        row.addWidget(btn, 0, align)
+
+        # Вставляем контейнeр в общий список сообщений
+        self.layout.insertWidget(self.layout.count() - 1, cont)
+        self._update_bubble_metrics_async()
+        return cont, btn  # вернём, чтобы вызывающий мог управлять (опционально)
 
     def add_message(self, who, text: str):
         row = QHBoxLayout()
@@ -68,7 +128,7 @@ class BubbleChat(QWidget):
         bubble.setFrameShape(QFrame.Shape.NoFrame)
         bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setStyleSheet(
-            "QFrame { background-color: %s; border-radius: 10px; }" %
+            "QFrame { background-color: %s; border-radius: 10px; border: none; }" %
             (USER_BUBBLE_BG if who == "user" else BOT_BUBBLE_BG)
         )
 
@@ -78,7 +138,10 @@ class BubbleChat(QWidget):
 
         lbl = QLabel()
         lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setText(as_rich_wrapped(text))
+        if who == "user":
+            lbl.setText(as_rich_wrapped(text))
+        else:
+            lbl.setText(as_rich_wrapped_bot(text))
         lbl.setFont(QFont("Segoe UI Emoji", 11))
         lbl.setWordWrap(True)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -173,6 +236,8 @@ class ChatTab(QWidget):
     def __init__(self, log_debug):
         super().__init__()
         self.log_debug = log_debug
+        self._sugg_btn_widget = None
+        self._last_q = None
         self.answer_ready.connect(self.on_answer_ready)
 
         layout = QVBoxLayout()
@@ -197,10 +262,27 @@ class ChatTab(QWidget):
     def _scroll_to_bottom(self):
         QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
             self.scroll.verticalScrollBar().maximum()))
+    
+    def _clear_last_suggestion(self):
+        state.LastSuggestion.update({
+            "kind": None, "entity": None, "field": None,
+            "df_name": None, "asked_value": None, "candidates": []
+        })
+
+    def _remove_suggestion_button(self):
+        if self._sugg_btn_widget is not None:
+            self._sugg_btn_widget.setParent(None)
+            self._sugg_btn_widget.deleteLater()
+            self._sugg_btn_widget = None
 
     def send_query(self):
         q = self.entry.text().strip()
         if not q: return
+        self.entry.clear()
+        self._last_q = q
+        self._remove_suggestion_button()
+        self._clear_last_suggestion()
+        state.LastQuestion = q
         self.entry.clear()
         self.chat_widget.add_message("user", f"👤 {q}")
         self._scroll_to_bottom()
@@ -227,8 +309,53 @@ class ChatTab(QWidget):
 
     def on_answer_ready(self, answer: str):
         self.log_debug(f"[UI] Отрисовка ответа: {repr(answer)[:200]}...")
+        self._remove_suggestion_button()
         self.chat_widget.add_message("bot", f"🤖 {answer}")
         self._scroll_to_bottom()
+        self._maybe_add_accept_value_button()
+
+    def _maybe_add_accept_value_button(self):
+        s = state.LastSuggestion
+        if not s or s.get("kind") != "value":
+            return
+        cands = s.get("candidates") or []
+        if not cands:
+            return
+        top_val = cands[0][0]
+        caption = f'Принять значение: "{top_val}"'
+        cont, _ = self.chat_widget.add_action_button("bot", caption, on_click=self._accept_value_and_rerun)
+        self._sugg_btn_widget = cont
+
+    def _accept_value_and_rerun(self):
+        s = state.LastSuggestion
+        if not s or s.get("kind") != "value":
+            self.chat_widget.add_message("bot", "⚠ Нет сохранённой подсказки по значениям.")
+            self._scroll_to_bottom()
+            return
+        entity = s.get("entity")
+        field = s.get("field")
+        asked = s.get("asked_value") or (s["candidates"][0][0] if s.get("candidates") else "")
+        chosen = s["candidates"][0][0]
+        msg = add_value_alias(entity, field, asked, chosen)
+        self._clear_last_suggestion()  # чтобы новая отправка не предлагала кнопку повторно
+        self.chat_widget.add_message("bot", f"✅ {msg}\nПовторяю запрос с учётом алиаса…")
+        self._scroll_to_bottom()
+
+        # повтор последнего запроса
+        q = self._last_q or state.LastQuestion
+        if not q:
+            return
+        def worker():
+            try:
+                ans = try_quick_count(q, DFS_REG)
+                if ans is None:
+                    ans = try_quick_list(q, DFS_REG)
+                if ans is None:
+                    ans = "⚠ Не удалось распознать параметры."
+                self.answer_ready.emit(ans)
+            except Exception as e:
+                self.answer_ready.emit(f"⚠ Ошибка: {e}")
+        threading.Thread(target=worker, daemon=True).start()
 
 
 class IIsys(QMainWindow):
