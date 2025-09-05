@@ -186,3 +186,21 @@ def dump_values(full: bool = False) -> str:
     for ref, amap in _STORE.get("_by_dict", {}).items():
         lines.append(f"  - {ref}: {len(amap)} алиасов")
     return "\n".join(lines) if lines else "Пока нет сохранённых мэппингов значений."
+
+def resolve_value_info(entity: str, field: str, value: str) -> Tuple[str, str, Optional[str]]:
+    """
+    Возвращает (canon, origin, bucket),
+      origin: "mapping:ref" | "mapping:ns" | "as_is"
+      bucket: ref_dict или ns_key
+    """
+    _ensure_loaded()
+    load_schema()
+    alias = (value or "").strip().lower()
+    canonical_field = unify_field_phrase(field) or field
+    ref = get_ref_dict(entity, canonical_field)
+    if ref and alias in _STORE["_by_dict"].get(ref, {}):
+        return _STORE["_by_dict"][ref][alias], "mapping:ref", ref
+    ns_key = f"{entity}.{canonical_field}"
+    if alias in _STORE["_by_dict"].get(ns_key, {}):
+        return _STORE["_by_dict"][ns_key][alias], "mapping:ns", ns_key
+    return value, "as_is", None

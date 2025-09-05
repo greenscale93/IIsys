@@ -2,6 +2,7 @@
 import re
 import pandas as pd
 import state
+import logging
 
 DF_ENV: dict[str, pd.DataFrame] = {}
 G_ENV = None
@@ -11,7 +12,7 @@ SAFE_BUILTINS = {
     "list": list, "dict": dict, "set": set, "any": any, "all": all, "abs": abs, "round": round,
     "enumerate": enumerate, "zip": zip
 }
-
+logger = logging.getLogger("ragos")
 # Метка авто-кода (без перевода строки здесь!)
 MAGIC = "# RAGOS_AUTOCODE"
 
@@ -50,6 +51,7 @@ def _patch_code(code: str) -> str:
     return code
 
 def python_repl_tool(code: str) -> str:
+    logger.info("[CODE.REPL.CALL] guard=%s len=%d", code.strip().startswith(MAGIC), len(code))
     # Разрешаем только автокод
     if not code.strip().startswith(MAGIC):
         return "🚫 Этот инструмент исполняет только код, сгенерированный шаблонами."
@@ -57,6 +59,7 @@ def python_repl_tool(code: str) -> str:
         return "🚫 SQL и pyodbc запрещены."
     try:
         code2 = _sanitize_code(code)
+        logger.info("[CODE.REPL.EXEC] lines=%d preview=%s", code2.count("\n")+1, code2[:200].replace("\n","⏎"))
         if code2 == "RAISE: CSV_IO_FORBIDDEN":
             return "🚫 Чтение CSV запрещено. Используй уже загруженные df_<ИмяСправочника>."
 
@@ -74,6 +77,11 @@ def python_repl_tool(code: str) -> str:
         exec(code2, {"__builtins__": SAFE_BUILTINS}, env)
         result = env.get("result")
         state.LastCode = code2
+
+        if isinstance(result, list):
+            logger.info("[CODE.REPL.RESULT] type=list size=%d", len(result))
+        else:
+            logger.info("[CODE.REPL.RESULT] type=%s preview=%s", type(result).__name__, str(result)[:200].replace("\n","⏎"))
 
         if result is None:
             state.LastResultStr = None

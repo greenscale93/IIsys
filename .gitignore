@@ -6,6 +6,7 @@
 /value_mappings_user.json
 /__pycache__
 repo_chunks/
+logs/
 
 # Byte-compiled / cache
 __pycache__/

@@ -17,7 +17,7 @@ from .fields import (
 )
 
 from .values import (
-    resolve_value,
+    resolve_value, resolve_value_info,
     add_value_alias,
     remove_value_alias,
     suggest_similar_values,

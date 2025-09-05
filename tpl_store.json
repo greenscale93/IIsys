@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "count_projects_by_contractor",
+      "text": "Сколько проектов по контрагенту {контрагент}?",
+      "params": [
+        "контрагент"
+      ],
+      "bindings": {
+        "контрагент": {
+          "entity": "Проекты",
+          "field": "Контрагент"
+        }
+      },
+      "code_template": "# RAGOS_AUTOCODE\ncol = 'Контрагент_Наименование' if 'Контрагент_Наименование' in df_Проекты.columns else 'Контрагент'\nresult = df_Проекты[df_Проекты[col] == {контрагент}].shape[0]"
+    },
+    {
+      "id": "list_projects_by_contractor",
+      "text": "Список проектов по контрагенту {контрагент}",
+      "params": [
+        "контрагент"
+      ],
+      "bindings": {
+        "контрагент": {
+          "entity": "Проекты",
+          "field": "Контрагент"
+        }
+      },
+      "code_template": "# RAGOS_AUTOCODE\ncol = 'Контрагент_Наименование' if 'Контрагент_Наименование' in df_Проекты.columns else 'Контрагент'\nname_col = 'Наименование' if 'Наименование' in df_Проекты.columns else 'GUID'\nresult = df_Проекты[df_Проекты[col] == {контрагент}][name_col].tolist()"
+    },
+    {
+      "id": "count_projects_by_unit",
+      "text": "Сколько проектов по подразделению {подразделение}?",
+      "params": [
+        "подразделение"
+      ],
+      "bindings": {
+        "подразделение": {
+          "entity": "Проекты",
+          "field": "Подразделение"
+        }
+      },
+      "code_template": "# RAGOS_AUTOCODE\ncol = 'Подразделение_Наименование' if 'Подразделение_Наименование' in df_Проекты.columns else 'Подразделение'\nresult = df_Проекты[df_Проекты[col] == {подразделение}].shape[0]"
+    },
+    {
+      "id": "count_projects_by_leader",
+      "text": "Сколько проектов по руководителю {руководитель}?",
+      "params": [
+        "руководитель"
+      ],
+      "bindings": {
+        "руководитель": {
+          "entity": "Проекты",
+          "field": "РуководительПроекта"
+        }
+      },
+      "code_template": "# RAGOS_AUTOCODE\ncol = 'РуководительПроекта_Наименование' if 'РуководительПроекта_Наименование' in df_Проекты.columns else 'РуководительПроекта'\nresult = df_Проекты[df_Проекты[col] == {руководитель}].shape[0]"
+    },
+    {
+      "id": "count_projects_by_unit_and_contractor",
+      "text": "Сколько проектов по подразделению {подразделение} и контрагенту {контрагент}?",
+      "params": [
+        "подразделение",
+        "контрагент"
+      ],
+      "bindings": {
+        "подразделение": {
+          "entity": "Проекты",
+          "field": "Подразделение"
+        },
+        "контрагент": {
+          "entity": "Проекты",
+          "field": "Контрагент"
+        }
+      },
+      "code_template": "# RAGOS_AUTOCODE\ncol_u = 'Подразделение_Наименование' if 'Подразделение_Наименование' in df_Проекты.columns else 'Подразделение'\ncol_c = 'Контрагент_Наименование' if 'Контрагент_Наименование' in df_Проекты.columns else 'Контрагент'\nmask = (df_Проекты[col_u] == {подразделение}) & (df_Проекты[col_c] == {контрагент})\nresult = df_Проекты[mask].shape[0]"
+    }
+  ],
+  "aliases": {
+    "сколько проектов по контрагенту {VAL}": "count_projects_by_contractor",
+    "сколько проектов у контрагента {VAL}?": "count_projects_by_contractor",
+    "сколько проектов в контрагенте {VAL}": "count_projects_by_contractor",
+    "сколько проектов по кантрогенту {VAL}?": "count_projects_by_contractor"
+  }
+}

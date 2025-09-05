@@ -11,12 +11,25 @@ if scripts_dir_str not in sys.path:
 import state
 import rules_io
 from data.loader import load_dataframes
-from engine.repl import register_dataframes
+from engine.repl import register_dataframes, register_graph
 from engine.router import try_quick_count, try_quick_list
 from graph.tool import load_graph
 from core.mappings import add_field_alias
 import core.mappings as mp
 from core.mappings import add_value_alias, remove_value_alias  # если у вас отдельный модуль values — импортируйте его как раньше
+from templates_ai import answer_via_templates
+from templates_store import add_alias as add_tpl_alias
+import logging
+from datetime import datetime
+from config import LOGS_DIR
+
+SESSION_LOG = os.path.join(LOGS_DIR, f"cli_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.FileHandler(SESSION_LOG, encoding="utf-8", delay=True)]
+)
+logging.getLogger("ragos").setLevel(logging.INFO)
 
 def is_structured(q: str) -> bool:
     return bool(re.search(r'\b(сколько|список|найд[иё])\b', q.lower()))
@@ -72,31 +85,28 @@ def main():
     dfs = load_dataframes()
     DFS_REG = dfs
     register_dataframes(dfs)
-    _ = load_graph()
+    G = load_graph()
+    if G is not None:
+        register_graph(G)
 
     print("🤖 Assistant: структурные запросы активны. RAG отключён.")
 
     while True:
         q = input("\n❓ Вопрос: ").strip()
         if q.lower() in ["exit", "выход", "quit", "q"]:
-            print("👋 Выход. Правила сохранены."); rules_io.save_rules(user_rules); break
+            print("👋 Выход."); break
 
-        # Команды принятия подсказок (обрабатываем ДО структурности)
-        msg = handle_accept_col_suggestion(q) or handle_accept_value_suggestion(q)
-        if msg:
-            print(msg); continue
+        # команды принятия подсказок (значение)
+        msg = handle_accept_value_suggestion(q)
+        if msg: print(msg); continue
 
         state.LastQuestion = q
-        out = None
-
-        if is_structured(q):
-            out = try_quick_count(q, dfs) or try_quick_list(q, dfs)
-            if out is None:
-                print("⚠ Не удалось распознать параметры. Пример: Сколько проектов по руководителю \"Фамилия\"?")
-                continue
-            state.LastAnswer = out
-            state.remember_exchange(q, out)
-            print("\n📌 Ответ:", out)
-            continue
-
-        print("ℹ Это не структурный запрос. Используй форму: «Сколько/Список ... по <поле> \"значение\" [и ...]».")
+        try:
+            text, sugg = answer_via_templates(q, DFS_REG)
+            if sugg:
+                state.LastSuggestion = sugg  # save_alias для кнопки/команды
+            state.LastAnswer = text
+            state.remember_exchange(q, text)
+            print("\n📌 Ответ:", text)
+        except Exception as e:
+            print(f"⚠ Ошибка обработки: {e}")

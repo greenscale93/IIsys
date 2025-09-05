@@ -32,6 +32,15 @@ def norm_guid(x: str) -> str:
     x = str(x).strip().strip("{}").lower()
     return x if len(x.replace("-", "")) >= 32 else ""
 
+def _read_csv_smart(path: str):
+    for enc in ("utf-8-sig", "utf-8", "cp1251"):
+        for sep in (";", ","):
+            try:
+                return pd.read_csv(path, sep=sep, dtype=str, low_memory=False, encoding=enc).fillna("")
+            except Exception:
+                continue
+    return pd.read_csv(path, sep=";", dtype=str, low_memory=False, encoding="utf-8", errors="replace").fillna("")
+
 def build_embeddings():
     try:
         emb = HuggingFaceEmbeddings(
@@ -80,9 +89,9 @@ csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
 
 for file in tqdm(csv_files, desc="📂 Обработка CSV файлов"):
     try:
-        df = pd.read_csv(file, sep=";", dtype=str, low_memory=False, encoding="utf-8").fillna("")
+        df = _read_csv_smart(file)
     except Exception:
-        df = pd.read_csv(file, sep=",", dtype=str, low_memory=False, encoding="utf-8").fillna("")
+        df = _read_csv_smart(file)
 
     filename = os.path.basename(file)
     entity_type = os.path.splitext(filename)[0]

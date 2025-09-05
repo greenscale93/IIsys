@@ -6,6 +6,9 @@ VENV_PYTHON = os.path.join(BASE_DIR, "rag_env", "Scripts", "python.exe")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+from templates_store import list_templates, get_template, add_alias, add_template as store_add_template, run_template as store_run_template
+from templates_ai import answer_via_templates, generate_template_with_llm
+
 # -*- coding: utf-8 -*-
 import subprocess, threading, traceback, io, html, math
 from PyQt6.QtWidgets import (
@@ -16,6 +19,38 @@ from PyQt6.QtGui import QAction, QFont, QTextDocument
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 import re
 from core.mappings import add_value_alias
+import logging, traceback
+from datetime import datetime
+from config import LOGS_DIR
+from engine.repl import register_dataframes, register_graph
+
+SESSION_LOG = os.path.join(LOGS_DIR, f"gui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.FileHandler(SESSION_LOG, encoding="utf-8", delay=True)]
+)
+
+def install_excepthook():
+    def _hook(exc_type, exc, tb):
+        logging.exception("UNHANDLED: %s", "".join(traceback.format_exception(exc_type, exc, tb)))
+        # опционально покажем в UI-консоли текстом — не завершаем процесс
+        print(f"⚠ Необработанная ошибка: {exc}")
+    sys.excepthook = _hook
+
+install_excepthook()
+
+def safe_remove_widget(w):
+    if not w:
+        return
+    try:
+        w.setParent(None)
+    except Exception:
+        pass
+    try:
+        w.deleteLater()
+    except Exception:
+        pass
 
 # --- Настройки внешнего вида ---
 USER_BUBBLE_BG = "#DCF8C6"   # зелёный для пользователя
@@ -39,7 +74,9 @@ def init_assistant():
     dfs = load_dataframes()
     DFS_REG = dfs
     register_dataframes(dfs)
-    _ = load_graph()
+    G = load_graph()
+    if G is not None:
+        register_graph(G)
 
 try:
     init_assistant()
@@ -69,7 +106,6 @@ class BubbleChat(QWidget):
         self.layout.addStretch(1)
     
     def add_action_button(self, who, caption: str, on_click):
-        # Контейнер с собственной разметкой, чтобы можно было удалить целиком
         cont = QWidget()
         row = QHBoxLayout(cont)
         row.setContentsMargins(0, 0, 0, 0)
@@ -77,47 +113,34 @@ class BubbleChat(QWidget):
 
         btn = QPushButton(caption)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        font = QFont("Segoe UI", 10)
-        font.setWeight(QFont.Weight.DemiBold)  # жирнее обычного
-        btn.setFont(font)
-
-        # Стиль в духе пузырьков
+        font = QFont("Segoe UI", 10); font.setWeight(QFont.Weight.DemiBold); btn.setFont(font)
         btn.setStyleSheet("""
             QPushButton {
-                background-color: #CDEFD7;   /* спокойный, но заметный зелёный */
-                color: #0F5132;              /* тёмно‑зелёный текст */
-                border: 1px solid #86D3A9;   /* тонкая зелёная рамка */
-                border-radius: 10px;
-                padding: 8px 14px;
-                font-weight: 600;
+                background-color: #CDEFD7; color: #0F5132;
+                border: 1px solid #86D3A9; border-radius: 10px;
+                padding: 8px 14px; font-weight: 600;
             }
             QPushButton:hover   { background-color: #BFE8CC; }
             QPushButton:pressed { background-color: #B2E2C1; }
-            QPushButton:disabled{
-                background-color: #EAF6EF;
-                color: #9AA4B2;
-                border-color: #D5EBDD;
-            }
+            QPushButton:disabled{ background-color: #EAF6EF; color: #9AA4B2; border-color: #D5EBDD; }
         """)
 
         def handler():
+            btn.setEnabled(False)
             try:
                 on_click()
+            except Exception as e:
+                logging.exception("Button handler error: %s", e)
+                print(f"⚠ Ошибка кнопки: {e}")
             finally:
-                # По требованию — убрать кнопку "будто её и не было"
-                cont.setParent(None)
-                cont.deleteLater()
+                QTimer.singleShot(0, lambda w=cont: safe_remove_widget(w))
 
         btn.clicked.connect(handler)
-
         align = Qt.AlignmentFlag.AlignLeft if who == "bot" else Qt.AlignmentFlag.AlignRight
         row.addWidget(btn, 0, align)
-
-        # Вставляем контейнeр в общий список сообщений
         self.layout.insertWidget(self.layout.count() - 1, cont)
         self._update_bubble_metrics_async()
-        return cont, btn  # вернём, чтобы вызывающий мог управлять (опционально)
+        return cont, btn
 
     def add_message(self, who, text: str):
         row = QHBoxLayout()
@@ -239,6 +262,7 @@ class ChatTab(QWidget):
         self._sugg_btn_widget = None
         self._last_q = None
         self.answer_ready.connect(self.on_answer_ready)
+        self._pending_save_alias = None
 
         layout = QVBoxLayout()
         self.scroll = QScrollArea()
@@ -270,10 +294,24 @@ class ChatTab(QWidget):
         })
 
     def _remove_suggestion_button(self):
-        if self._sugg_btn_widget is not None:
-            self._sugg_btn_widget.setParent(None)
-            self._sugg_btn_widget.deleteLater()
-            self._sugg_btn_widget = None
+        for attr in ("_sugg_btn_widget", "_sugg_btn_widget2"):
+            w = getattr(self, attr, None)
+            safe_remove_widget(w)
+            setattr(self, attr, None)
+
+    def _maybe_add_accept_template_button(self):
+        s = state.LastSuggestion
+        if not s or s.get("kind") != "template":
+            return
+        tid = s.get("template_id")
+        if not tid:
+            return
+        # 2 кнопки: Предпросмотр и Принять
+        cont_prev, _ = self.chat_widget.add_action_button("bot", "🧪 Предпросмотр", on_click=self._preview_template)
+        cont_acc, _  = self.chat_widget.add_action_button("bot", f'Принять шаблон: "{tid}"', on_click=self._accept_template_and_run)
+        # будем уметь убрать обе
+        self._sugg_btn_widget = cont_prev  # запомним хотя бы одну; вторую удалим вместе с сообщением
+        self._sugg_btn_widget2 = cont_acc
 
     def send_query(self):
         q = self.entry.text().strip()
@@ -282,27 +320,23 @@ class ChatTab(QWidget):
         self._last_q = q
         self._remove_suggestion_button()
         self._clear_last_suggestion()
-        state.LastQuestion = q
-        self.entry.clear()
         self.chat_widget.add_message("user", f"👤 {q}")
         self._scroll_to_bottom()
-        self.log_debug(f"[send_query] Вопрос: {repr(q)}")
+        self.log_debug(f"[send_query] {repr(q)}")
 
         def worker():
             try:
-                self.log_debug(f"[worker] Начало обработки: {repr(q)}")
-                ans = try_quick_count(q, DFS_REG)
-                self.log_debug(f"[worker] try_quick_count -> {repr(ans)}")
-                if ans is None:
-                    ans = try_quick_list(q, DFS_REG)
-                    self.log_debug(f"[worker] try_quick_list -> {repr(ans)}")
-                if ans is None:
-                    ans = "⚠ Не удалось распознать параметры."
-                self.log_debug(f"[worker] Итоговый ответ: {repr(ans)[:200]}...")
-                self.answer_ready.emit(ans)
+                text, sugg = answer_via_templates(q, DFS_REG)
+                if sugg:
+                    if sugg.get("kind") == "save_alias" and state.LastSuggestion.get("kind") == "value":
+                        self._pending_save_alias = sugg
+                    else:
+                        state.LastSuggestion = sugg
+                        self._pending_save_alias = None
+                else:
+                    self._pending_save_alias = None
+                self.answer_ready.emit(text)
             except Exception as e:
-                tb = traceback.format_exc()
-                self.log_debug(f"[worker EXCEPTION] {tb}")
                 self.answer_ready.emit(f"⚠ Ошибка: {e}")
 
         threading.Thread(target=worker, daemon=True).start()
@@ -312,51 +346,232 @@ class ChatTab(QWidget):
         self._remove_suggestion_button()
         self.chat_widget.add_message("bot", f"🤖 {answer}")
         self._scroll_to_bottom()
-        self._maybe_add_accept_value_button()
 
+        if state.LastSuggestion.get("kind") == "value":
+            self._maybe_add_accept_value_button()
+            if self._pending_save_alias:
+                self._maybe_add_save_alias_button(self._pending_save_alias)
+        elif state.LastSuggestion.get("kind") == "save_alias":
+            self._maybe_add_save_alias_button()
+    
+    def _maybe_add_save_alias_button(self, sugg=None):
+        s = sugg or state.LastSuggestion
+        if not s or s.get("kind") != "save_alias":
+            return
+        tid = s.get("template_id")
+        if not tid:
+            return
+        caption = f'Сохранить привязку фразы к шаблону: "{tid}"'
+        cont, _ = self.chat_widget.add_action_button("bot", caption, on_click=self._save_alias_for_template)
+        self._sugg_btn_widget2 = cont
+
+    def _save_alias_for_template(self):
+        s = state.LastSuggestion
+        if not s or s.get("kind") != "save_alias":
+            self.chat_widget.add_message("bot", "⚠ Нет предложения для привязки.")
+            self._scroll_to_bottom(); return
+        tid = s.get("template_id")
+        q = s.get("question") or self._last_q or ""
+        msg = add_alias(q, tid)
+        self._clear_last_suggestion()
+        self.chat_widget.add_message("bot", f"✅ {msg}")
+        self._scroll_to_bottom()
+    
+    def _accept_template_and_run(self):
+        s = state.LastSuggestion
+        if not s or s.get("kind") != "template":
+            self.chat_widget.add_message("bot", "⚠ Нет предложения по шаблону.")
+            self._scroll_to_bottom()
+            return
+        tid = s.get("template_id")
+        params = s.get("params") or {}
+        q = s.get("question") or self._last_q or ""
+        msg = add_alias(q, tid)
+        self.chat_widget.add_message("bot", f"✅ {msg}\nВыполняю шаблон…")
+        tpl = get_template(tid)
+        if not tpl:
+            self.chat_widget.add_message("bot", f"⚠ Шаблон «{tid}» не найден.")
+            return
+        try:
+            preview = store_run_template(tpl, params)
+            self.answer_ready.emit(f'**Применяю шаблон:** {tpl["text"]}\nПараметры: {params}\n🧠 **Мой ответ:** {preview}')
+        except Exception as e:
+            self.answer_ready.emit(f"⚠ Ошибка выполнения шаблона: {e}")
+        self._clear_last_suggestion()
+        
     def _maybe_add_accept_value_button(self):
         s = state.LastSuggestion
-        if not s or s.get("kind") != "value":
-            return
+        if not s or s.get("kind") != "value": return
         cands = s.get("candidates") or []
-        if not cands:
-            return
+        if not cands: return
         top_val = cands[0][0]
         caption = f'Принять значение: "{top_val}"'
         cont, _ = self.chat_widget.add_action_button("bot", caption, on_click=self._accept_value_and_rerun)
         self._sugg_btn_widget = cont
 
-    def _accept_value_and_rerun(self):
+    def _preview_template(self):
         s = state.LastSuggestion
-        if not s or s.get("kind") != "value":
-            self.chat_widget.add_message("bot", "⚠ Нет сохранённой подсказки по значениям.")
+        if not s or s.get("kind") != "template":
+            self.chat_widget.add_message("bot", "⚠ Нет предложения по шаблону.")
             self._scroll_to_bottom()
             return
-        entity = s.get("entity")
-        field = s.get("field")
-        asked = s.get("asked_value") or (s["candidates"][0][0] if s.get("candidates") else "")
-        chosen = s["candidates"][0][0]
-        msg = add_value_alias(entity, field, asked, chosen)
-        self._clear_last_suggestion()  # чтобы новая отправка не предлагала кнопку повторно
-        self.chat_widget.add_message("bot", f"✅ {msg}\nПовторяю запрос с учётом алиаса…")
+        tid = s.get("template_id")
+        if not tid:
+            self.chat_widget.add_message("bot", "⚠ Не указан шаблон.")
+            return
+        tpl = get_template(tid)
+        if not tpl:
+            self.chat_widget.add_message("bot", f"⚠ Шаблон «{tid}» не найден.")
+            return
+        params = s.get("params") or {}
+        try:
+            preview = store_run_template(tpl, params)
+            self.chat_widget.add_message("bot", f'🧪 Предпросмотр «{tid}»\nПараметры: {params}\n🧠 **Мой ответ:** {preview}')
+        except Exception as e:
+            self.chat_widget.add_message("bot", f"⚠ Ошибка предпросмотра: {e}")
         self._scroll_to_bottom()
 
-        # повтор последнего запроса
-        q = self._last_q or state.LastQuestion
-        if not q:
-            return
+    def _accept_value_and_rerun(self):
+        try:
+            s = state.LastSuggestion
+            if not s or s.get("kind") != "value":
+                self.chat_widget.add_message("bot", "⚠ Нет сохранённой подсказки по значениям.")
+                self._scroll_to_bottom(); return
+
+            entity = s.get("entity"); field = s.get("field")
+            asked = s.get("asked_value") or (s["candidates"][0][0] if s.get("candidates") else "")
+            chosen = s["candidates"][0][0]
+
+            from core.mappings import add_value_alias
+            msg = add_value_alias(entity, field, asked, chosen)
+            logging.info("Value alias added: %s / %s / %s -> %s", entity, field, asked, chosen)
+
+            # ВАЖНО: убрать старую подсказку перед повторным запуском
+            self._remove_suggestion_button()
+            self._clear_last_suggestion()
+            self._pending_save_alias = None
+
+            self.chat_widget.add_message("bot", f"✅ {msg}\nПовторяю запрос с учётом алиаса…")
+            self._scroll_to_bottom()
+            q = self._last_q or state.LastQuestion or ""
+
+            def worker():
+                try:
+                    text, sugg = answer_via_templates(q, DFS_REG)
+                    if sugg:
+                        state.LastSuggestion = sugg
+                        self._pending_save_alias = None
+                    else:
+                        self._pending_save_alias = None
+                    self.answer_ready.emit(text)
+                except Exception as e:
+                    logging.exception("Re-run after accept value error: %s", e)
+                    self.answer_ready.emit(f"⚠ Ошибка: {e}")
+
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as e:
+            logging.exception("Accept value handler error: %s", e)
+            self.chat_widget.add_message("bot", f"⚠ Ошибка: {e}")
+
+class TemplatesTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPushButton
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        self.refresh_btn = QPushButton("Обновить список")
+        self.refresh_btn.clicked.connect(self.reload)
+        top.addWidget(self.refresh_btn); top.addStretch(1)
+        lay.addLayout(top)
+
+        mid = QHBoxLayout()
+        self.list = QListWidget()
+        self.list.itemSelectionChanged.connect(self.show_selected)
+        mid.addWidget(self.list, 2)
+
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 10))
+        mid.addWidget(self.details, 5)
+        lay.addLayout(mid)
+        self.reload()
+
+    def reload(self):
+        self.list.clear()
+        for t in list_templates():
+            self.list.addItem(f'{t["id"]} — {t["text"]}')
+        self.details.setPlainText("")
+
+    def show_selected(self):
+        items = self.list.selectedItems()
+        if not items: 
+            self.details.setPlainText(""); return
+        first = items[0].text()
+        tid = first.split(" — ",1)[0].strip()
+        t = get_template(tid)
+        if not t:
+            self.details.setPlainText("Не найден"); return
+        txt = []
+        txt.append(f"ID: {t['id']}")
+        txt.append(f"Текст: {t['text']}")
+        txt.append(f"Параметры: {t.get('params', [])}")
+        txt.append("\nКод:")
+        txt.append(t.get("code_template",""))
+        self.details.setPlainText("\n".join(txt))
+
+class TemplateGenTab(QWidget):
+    answer_ready = pyqtSignal(str)
+    def __init__(self, log_debug):
+        super().__init__()
+        self.log_debug = log_debug
+        self.answer_ready.connect(self.on_answer_ready)
+        self._last_proposal = None
+        layout = QVBoxLayout(self)
+        self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True)
+        self.chat_widget = BubbleChat(); self.scroll.setWidget(self.chat_widget)
+        layout.addWidget(self.scroll)
+        entry_layout = QHBoxLayout()
+        self.entry = QLineEdit(); self.entry.setFont(QFont("Segoe UI Emoji", 11))
+        send_btn = QPushButton("Сгенерировать"); send_btn.clicked.connect(self.send)
+        entry_layout.addWidget(self.entry); entry_layout.addWidget(send_btn)
+        layout.addLayout(entry_layout)
+
+    def _scroll_to_bottom(self):
+        QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
+            self.scroll.verticalScrollBar().maximum()))
+
+    def send(self):
+        q = self.entry.text().strip()
+        if not q: return
+        self.entry.clear()
+        self.chat_widget.add_message("user", f"👤 {q}")
+        self._scroll_to_bottom()
         def worker():
             try:
-                ans = try_quick_count(q, DFS_REG)
-                if ans is None:
-                    ans = try_quick_list(q, DFS_REG)
-                if ans is None:
-                    ans = "⚠ Не удалось распознать параметры."
-                self.answer_ready.emit(ans)
+                prop = generate_template_with_llm(q, DFS_REG, list_templates())
+                if not prop:
+                    self.answer_ready.emit("⚠ Не удалось сгенерировать шаблон (LLM недоступна или ошибка).")
+                    return
+                self._last_proposal = prop
+                # предпросмотр исполнения не делаем, т.к. нет параметров
+                details = f'ID: {prop["id"]}\nТекст: {prop["text"]}\nПараметры: {prop.get("params", [])}\n\nКод:\n{prop["code_template"]}'
+                if prop.get("validation_error"):
+                    details += f'\n\n⚠ Предупреждение проверки: {prop["validation_error"]}'
+                self.answer_ready.emit(details)
             except Exception as e:
-                self.answer_ready.emit(f"⚠ Ошибка: {e}")
+                self.answer_ready.emit(f"⚠ Ошибка генерации: {e}")
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_answer_ready(self, answer: str):
+        self.log_debug(f"[UI] Отрисовка ответа: {repr(answer)[:200]}...")
+        self._remove_suggestion_button()
+        self.chat_widget.add_message("bot", f"🤖 {answer}")
+        self._scroll_to_bottom()
+        # приоритет значений (кнопка зеленая), затем "сохранить привязку"
+        if state.LastSuggestion.get("kind") == "value":
+            self._maybe_add_accept_value_button()
+        if state.LastSuggestion.get("kind") == "save_alias":
+            self._maybe_add_save_alias_button()
 
 class IIsys(QMainWindow):
     def __init__(self):
@@ -405,6 +620,12 @@ class IIsys(QMainWindow):
         graph_tab.setLayout(g_layout)
         self.tabs.addTab(graph_tab, "🌐 Граф")
 
+        self.templates_tab = TemplatesTab()
+        self.tabs.addTab(self.templates_tab, "📐 Шаблоны")
+
+        self.tpl_gen_tab = TemplateGenTab(self.log_debug)
+        self.tabs.addTab(self.tpl_gen_tab, "🧩 Генератор шаблонов")
+
         self.console = QTextEdit()
         self.console.setFont(QFont("Consolas", 9))
         self.console.setReadOnly(True)
@@ -414,7 +635,9 @@ class IIsys(QMainWindow):
         class EmittingStream(io.TextIOBase):
             def __init__(self, write_func): self.write_func = write_func
             def write(self, text):
-                if text.strip(): self.write_func(text.strip())
+                if text.strip():
+                    logging.info(text.strip())
+                    self.write_func(text.strip())
             def flush(self): pass
         sys.stdout = EmittingStream(self.log_debug)
         sys.stderr = EmittingStream(self.log_debug)

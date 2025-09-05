@@ -23,6 +23,7 @@ RULES_FILE = os.path.join(SCRIPTS_DIR, "rules.json")
 PROMPT_EXAMPLES = os.path.join(SCRIPTS_DIR, "prompt_examples.txt")
 BAD_CASES_FILE = os.path.join(SCRIPTS_DIR, "bad_cases.jsonl")
 TEMPLATES_FILE = os.path.join(SCRIPTS_DIR,"templates.json")
+TPL_STORE_FILE = os.path.join(SCRIPTS_DIR, "tpl_store.json")
 
 # Мэппинги
 MAPPINGS_USER_FILE = os.path.join(SCRIPTS_DIR, "mappings_user.json")
